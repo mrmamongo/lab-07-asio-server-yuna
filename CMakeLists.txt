@@ -26,44 +26,91 @@ string(APPEND CMAKE_CXX_FLAGS " -pedantic -Werror -Wall -Wextra")
 string(APPEND CMAKE_CXX_FLAGS " -Wno-unused-command-line-argument")
 string(APPEND CMAKE_CXX_FLAGS " -Wshadow -Wnon-virtual-dtor")
 
-hunter_add_package(GTest)
-find_package(GTest CONFIG REQUIRED)
+set(Boost_USE_STATIC_LIBS ON)
 
-add_library(${PROJECT_NAME} STATIC
-  # enum your files and delete this comment
-  ${CMAKE_CURRENT_SOURCE_DIR}/sources/source.cpp
-)
+hunter_add_package(Boost COMPONENTS log thread system chrono filesystem regex date_time)
+find_package(Boost COMPONENTS log log_setup thread system chrono filesystem regex date_time)
 
-add_executable(demo
-  ${CMAKE_CURRENT_SOURCE_DIR}/demo/main.cpp
-)
+hunter_add_package(nlohmann_json)
+find_package(nlohmann_json)
 
-target_include_directories(${PROJECT_NAME} PUBLIC
-  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include>"
-)
+set(Boost_LIB
+        ${Boost_LOG_SETUP_LIBRARY}
+        ${Boost_LOG_LIBRARY}
+        ${Boost_FILESYSTEM_LIBRARY}
+        ${Boost_THREAD_LIBRARY}
+        ${Boost_SYSTEM_LIBRARY}
+        )
 
-target_link_libraries(demo ${PROJECT_NAME})
+#==============================================LOGGER==============================================
+add_library(logger INTERFACE)
 
-if(BUILD_TESTS)
-  add_executable(tests
-    # TODO: enum your files and delete this comment
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test.cpp
-  )
-  target_link_libraries(tests ${PROJECT_NAME} GTest::gtest_main)
-  enable_testing()
-  add_test(NAME unit_tests COMMAND tests)
-endif()
+target_include_directories(logger INTERFACE
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/logger>"
+        "$<BUILD_INTERFACE:${Boost_INCLUDE_DIR}>"
+        "$<INSTALL_INTERFACE:include/logger>"
+        )
 
-if(BUILD_COVERAGE)
-  set(ENABLE_COVERAGE ON CACHE BOOL "Enable coverage build." FORCE)
-  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tools/coverage/cmake")
-  find_package(codecov)
-  string(APPEND CMAKE_CXX_FLAGS " --coverage")
-  add_coverage(${PROJECT_NAME})
-  add_coverage(tests)
-  coverage_evaluate()
-endif()
+target_link_libraries(logger INTERFACE ${Boost_LIBRARIES} Boost::boost pthread)
+
+add_executable(logger_demo
+        sources/log_demo.cpp
+        )
+target_link_libraries(logger_demo logger Boost::log_setup Boost::log)
+#==================================================================================================
+
+#==============================================COMMON==============================================
+add_library(common INTERFACE)
+
+target_include_directories(common INTERFACE
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/common>"
+        "$<BUILD_INTERFACE:${Boost_INCLUDE_DIR}>"
+        "$<INSTALL_INTERFACE:include/common>"
+        )
+
+target_link_libraries(common INTERFACE
+        ${Boost_LIB} logger pthread Boost::boost
+        )
+#==================================================================================================
+
+#==============================================SERVER==============================================
+add_library(server INTERFACE)
+
+target_include_directories(server INTERFACE
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/server>"
+        "$<BUILD_INTERFACE:${Boost_INCLUDE_DIR}>"
+        "$<INSTALL_INTERFACE:include/server>"
+        )
+
+add_executable(server_ex
+        sources/server_main.cpp
+        )
+
+target_link_libraries(server INTERFACE
+        ${Boost_LIB} common logger pthread Boost::boost
+        )
+
+target_link_libraries(server_ex server common logger)
+#==================================================================================================
+#==============================================CLIENT==============================================
+add_library(client INTERFACE)
+
+target_include_directories(client INTERFACE
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/client>"
+        "$<BUILD_INTERFACE:${Boost_INCLUDE_DIR}>"
+        "$<INSTALL_INTERFACE:include/client>"
+        )
+
+add_executable(client_ex
+        sources/client_main.cpp
+        )
+
+target_link_libraries(client INTERFACE
+        ${Boost_LIB} common logger pthread Boost::boost
+        )
+
+target_link_libraries(client_ex client common logger)
+#==================================================================================================
 
 if(BUILD_DOCS)
   set(DOXYGEN_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_docs)
@@ -78,7 +125,7 @@ endif()
 
 include(CPackConfig.cmake)
 
-install(TARGETS ${PROJECT_NAME} demo
+install(TARGETS client_ex server_ex
   EXPORT "${PROJECT_NAME}-targets"
   RUNTIME DESTINATION bin
   ARCHIVE DESTINATION lib

@@ -64,7 +64,7 @@ void accept_thread() {
         auto client = std::make_shared<talk_to_client>(); // talk_to_client - user defined class
         acceptor.accept(client->sock());
         boost::recursive_mutex::scoped_lock lock{mutex};
-        clients.push_back(client);
+        _clients.push_back(client);
     }
 }
 
@@ -72,10 +72,10 @@ void handle_clients_thread() {
     while (true) {
         std::this_thread::sleep(std::chrono::milliseconds{1});
         boost::recursive_mutex::scoped_lock lock{mutex};
-        for (auto& client : clients) {
+        for (auto& client : _clients) {
             // for each client calling answer_to_client();
         }
-        // and then erase clients that timed out
+        // and then erase _clients that timed out
       }
 }
 
