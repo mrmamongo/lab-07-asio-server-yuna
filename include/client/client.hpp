@@ -7,44 +7,53 @@
 
 #include <common.hpp>
 
-logger::logger_t logger::logger::_logger;
-
-class client_t : public connection {
+class client_t {
  public:
-  client_t(const std::string& username)
-      : connection(owner::client, "client"), _username(username){
-    _socket = socket_t(*_pcontext);
+  client_t(const std::string& username): _username(username), _logger("client_")
+  {
+    _connection = (std::make_shared<connection>(connection::owner::client, _logger, _context));
   }
 
-  ~client_t() override{
+  ~client_t(){
     disconnect();
-  }
-
- public:
-
-
-
- private:
-  void disconnect() override{
-    if(_socket.is_open()){
-      _logger->log("Closing connection to server...", logger::l_info);
-      _socket.close();
+    if(_context_thread.joinable()){
+      _context_thread.join();
     }
   }
 
-  void connect() override{
+ public:
+  void connect(const std::string& host, uint32_t port) {
+    _context_thread = boost::thread([this] { _context.run(); });
+    resolver_t resolver(_context);
+    auto ep = resolver.resolve(host, std::to_string(port));
+    _connection->connect_to_server(*ep.begin());
+    LOG(_logger, l_debug) << "Sending username..." << _username << "karoche";
+    _connection->send(_username);
+    boost::this_thread::sleep_for(boost::chrono::milliseconds(500));
+    auto answer = _connection->read();
 
+    LOG(_logger, l_info)
+        << "Connection established: "
+        << _connection->get_socket().remote_endpoint().address().to_string()
+        << ":" << _connection->get_socket().remote_endpoint().port()
+        << "karoche";
+    LOG(_logger, l_debug) << "Message from server: " << answer << "karoche";
   }
 
-  void send() override{
 
-  }
 
-  void read() override{
-
+ private:
+  void disconnect(){
+    _connection->disconnect();
   }
  private:
   const std::string _username;
+  std::shared_ptr<connection> _connection;
+
+  io_context_t _context;
+  boost::thread _context_thread;
+
+  logger::logger _logger;
 };
 
 

@@ -1,12 +1,16 @@
 // Copyright 2020 Lamp
 #include <logger.hpp>
 
+#include "../include/common/common.hpp"
+
 int main(){
   logger::logger log;
-  log.log("Hello, this is info message", logger::l_info);
-  log.log("Hello, this is trace message", logger::l_trace);
-  log.log("Hello, this is debug message", logger::l_debug);
-  log.log("Hello, this is warning message", logger::l_warning);
-  log.log("Hello, this is error message", logger::l_error);
-  log.log("Hello, this is fatal message", logger::l_fatal);
+  LOG(log, l_info) << "This is " << "separated " << "info message" << "karoche";
+  json message_header;
+  message_header["cs_ping"] = 1.0;
+  message_header["owner"] = "server";
+  message_header["message_id"] = "header";
+  message_header["message"] = 100500;
+
+  LOG(log, l_info) << message_header.dump() << "karoche";
 }

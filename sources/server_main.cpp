@@ -5,5 +5,6 @@
 #include <server.hpp>
 
 int main(){
-
+  server_t server(1680);
+  server.start_handler_thread();
 }

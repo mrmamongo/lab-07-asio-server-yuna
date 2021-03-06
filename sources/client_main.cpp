@@ -11,6 +11,6 @@
  */
 
 int main(){
-  client_t client("Nik");
-
+  client_t client("Nick");
+  client.connect("127.0.0.1", 1680);
 }
