@@ -12,19 +12,42 @@
 #include <deque>
 #include <iostream>
 #include <logger.hpp>
-
+#include <boost/thread/recursive_mutex.hpp>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
-const uint32_t MESSAGE_HEADER_SIZE = 72;
+/*
+ * These strings contain declared message headers
+ * cause the Author is so lazy to declare true
+ * enumerations and to convert them to strings
+ */
+
+// Client responses
+const std::string c_login = "c_login";
+const std::string c_clients = "c_clients";
+const std::string c_ping = "c_ping";
+const std::string c_disconnect = "c_disconnect";
+// Server responses
+const std::string s_accept = "s_accept";
+const std::string s_deny = "s_deny";
+const std::string s_clients = "s_clients";
+const std::string s_ping = "s_ping";
+
+// For incorrect responses
+const std::string INCORRECT = "INCORRECT";
+const std::string DISCONNECTED = "DISCONNECTED";
+
 
 using socket_t = boost::asio::ip::tcp::socket;
 using acceptor_t = boost::asio::ip::tcp::acceptor;
-using io_context_t = boost::asio::io_context;
+using io_context_t = boost::asio::io_service;
 using endpoint_t = boost::asio::ip::tcp::endpoint;
 using error_code = boost::system::error_code;
 using resolver_t = boost::asio::ip::tcp::resolver;
+using streambuf_t = boost::asio::streambuf;
+
+
 
 class connection {
  public:
@@ -54,9 +77,8 @@ class connection {
   [[nodiscard]] size_t get_id() const { return _id; }
 
   public:
-  void connect_to_server(const endpoint_t& endpoint){
+  void connect_to_server(const endpoint_t& endpoint, error_code& ec){
     if (_owner == owner::client){
-      error_code ec;
       _socket.connect(endpoint, ec);
       if(!ec){
         LOG(_logger, l_info) << "Connected to server" << "karoche";
@@ -88,40 +110,28 @@ class connection {
     read_body(body, ec);
     return body;
   }
-  json read_header() {
-    json msg, header;
-    boost::asio::streambuf buff;
+  void send(const std::string& message_id, const std::string& message = std::string()){
+    json msg;
+    msg["cs_ping"] = 1.0;
+    msg["owner"] = (_owner == owner::server ? "server" : "client");
+    msg["message_id"] = message_id;
+    msg["message"] = message;
+
     error_code ec;
-    _socket.wait(boost::asio::socket_base::wait_read);
-    boost::asio::read_until(_socket, buff, "\n", ec);
-    boost::this_thread::sleep_for(boost::chrono::milliseconds(500));
-    if (!ec) {
-      // Add log
-    } else {
-      // Add log
-      disconnect();
-    }
-    std::string header_string = boost::asio::buffer_cast<const char*>(buff.data());
-    LOG(_logger, l_debug) << header_string << "karoche";
-    try {
-      header_string.pop_back();
-      header = json::parse(header_string);
-      read_body(msg, ec);
-    } catch (std::exception& e) {
-      LOG(_logger, l_error) << "Header parsing error: " << e.what() << "karoche";
-      disconnect();
-    }
-    return msg;
+    write_body(msg, ec);
   }
+ private:
   void read_body(json& msg, error_code& ec) {
-    boost::asio::streambuf buff;
+    streambuf_t buff;
     _socket.wait(boost::asio::socket_base::wait_read);
-    boost::asio::read_until(_socket, buff, "\n", ec);
+    boost::asio::read_until(_socket, buff, "\t", ec);
     boost::this_thread::sleep_for(boost::chrono::milliseconds(500));
     if(!ec){
-      // Add log
+      LOG(_logger, l_debug) << (_owner == owner::client ? "" : std::string("[" + std::to_string(_id) + "]"))
+                            << " Message read" << "karoche";
     } else {
-      // Add log
+      LOG(_logger, l_error) << (_owner == owner::client ? "" : std::string("[" + std::to_string(_id) + "]"))
+          << "Message reading error: " << ec.message() << "karoche";
       disconnect();
     }
     std::string msg_string = boost::asio::buffer_cast<const char*>(buff.data());
@@ -129,63 +139,34 @@ class connection {
         msg_string.pop_back();
         msg = json::parse(msg_string);
       } catch(std::exception& e){
-        LOG(_logger, l_error) << "Body parsing error: " << e.what() << "karoche";
+        LOG(_logger, l_error)
+            << (_owner == owner::client ? "" : std::string("[" + std::to_string(_id) + "]"))
+            << "Body parsing error: " << e.what() << "karoche";
         disconnect();
       }
   }
 
-  void send(const std::string& message){
-    json msg;
-    msg["cs_ping"] = 1.0;
-    msg["owner"] = (_owner == owner::server ? "server" : "client");
-    msg["message_id"] = "header";
-    msg["message"] = (message.empty() ? "null" : message);
 
-    error_code ec;
-    write_body(msg, ec);
-  }
-  void write_header(const json& msg) {
-    json header;
-    header["cs_ping"] = 1.0;
-    header["owner"] = msg["owner"].get<std::string>();
-    header["message_id"] = "header";
-    header["message"] = msg.dump().size();
 
-    error_code ec;
-    _socket.write_some(boost::asio::buffer(build_msg(header)), ec);
-    boost::this_thread::sleep_for(boost::chrono::milliseconds(500));
-
-    if (!ec) {
-      LOG(_logger, l_debug)
-          << "[" << _id << "]"
-          << "Header was written. Header size: " << header.dump().size()
-          << " Body size: " << header["message"].get<int>() << "karoche";
-      write_body(msg, ec);
-    } else {
-      LOG(_logger, l_error)
-          << "[" << _id << "]"
-          << " Header writing error: " << ec.message() << "karoche";
-      disconnect();
-    }
-  }
   void write_body(const json& msg, error_code& ec) {
+    _socket.wait(boost::asio::socket_base::wait_write);
     _socket.write_some(boost::asio::buffer(build_msg(msg)), ec);
-    boost::this_thread::sleep_for(boost::chrono::milliseconds(500));
+    boost::this_thread::sleep_for(boost::chrono::milliseconds(100));
 
     if (!ec) {
       LOG(_logger, l_debug)
-          << "[" << _id << "]"
-          << "Body was written. Body size: " << msg.dump().size() << "karoche";
+          << (_owner == owner::client ? "" : std::string("[" + std::to_string(_id) + "]"))
+          << " Message was written. Body size: " << msg.dump().size() << "karoche";
     } else {
       LOG(_logger, l_error)
-          << "[" << _id << "]"
-          << " Body writing error: " << ec.message() << "karoche";
+          << (_owner == owner::client ? "" : std::string("[" + std::to_string(_id) + "]"))
+          << " Message writing error: " << ec.message() << "karoche";
       disconnect();
     }
   }
 
   std::string build_msg(const json& msg){
-    return msg.dump() + "\n";
+    return msg.dump() + "\t";
   }
  protected:
   logger::logger& _logger;
